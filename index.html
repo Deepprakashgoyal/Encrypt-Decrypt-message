@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Encrypte / Decrypte Messages</title>
+</head>
+<body>
+    <input type="text" id="message" placeholder="message" autocomplete="off"/>
+    <input type="password" id="passphrase" placeholder="passphrase" autocomplete="off"/>
+    <button id="runEncrypt">Encrypt</button>
+    <button id="runDecrypt">Decrypt</button>
+    <div>
+        <p>Encrypted Message: <code id="encryptedMessage"></code> <button id="copyEncryptedMessage">Copy</button></p>
+        <p>Decrypted Message: <code id="decryptedMessage"></code> <button id="decryptedMessage">Copy</button></p>
+    </div>
+
+    <script>
+        // Function to convert a Uint8Array to a base64 string
+        function uint8ArrayToBase64(uint8Array) {
+            return btoa(String.fromCharCode.apply(null, uint8Array));
+        }
+
+        // Function to convert a base64 string to a Uint8Array
+        function base64ToUint8Array(base64) {
+            try {
+                const binaryString = atob(base64);
+                const length = binaryString.length;
+                const uint8Array = new Uint8Array(length);
+                for (let i = 0; i < length; i++) {
+                    uint8Array[i] = binaryString.charCodeAt(i);
+                }
+                return uint8Array;
+            } catch (error) {
+                throw new Error("Failed to decode base64 string: " + error.message);
+            }
+        }
+
+        // Function to derive a key from a passphrase
+        async function deriveKey(passphrase, salt) {
+            const encoder = new TextEncoder();
+            const keyMaterial = await crypto.subtle.importKey(
+                "raw",
+                encoder.encode(passphrase),
+                { name: "PBKDF2" },
+                false,
+                ["deriveKey"]
+            );
+            return crypto.subtle.deriveKey(
+                {
+                    name: "PBKDF2",
+                    salt: salt,
+                    iterations: 100000,
+                    hash: "SHA-256"
+                },
+                keyMaterial,
+                { name: "AES-GCM", length: 256 },
+                true,
+                ["encrypt", "decrypt"]
+            );
+        }
+
+        // Function to encrypt a message
+        async function encryptMessage(message, passphrase) {
+            if (message === '' || passphrase === '') {
+                alert("Fields can't be blank");
+                return;
+            }
+            const encoder = new TextEncoder();
+            const salt = crypto.getRandomValues(new Uint8Array(16));
+            const iv = crypto.getRandomValues(new Uint8Array(12));
+            const key = await deriveKey(passphrase, salt);
+            const data = encoder.encode(message);
+            const encrypted = await crypto.subtle.encrypt(
+                { name: "AES-GCM", iv: iv },
+                key,
+                data
+            );
+            const ivAndEncrypted = new Uint8Array(salt.length + iv.length + encrypted.byteLength);
+            ivAndEncrypted.set(salt, 0);
+            ivAndEncrypted.set(iv, salt.length);
+            ivAndEncrypted.set(new Uint8Array(encrypted), salt.length + iv.length);
+            return uint8ArrayToBase64(ivAndEncrypted);
+        }
+
+        // Function to decrypt a message
+        async function decryptMessage(encryptedMessage, passphrase) {
+            try {
+                const data = base64ToUint8Array(encryptedMessage);
+                const salt = data.slice(0, 16);
+                const iv = data.slice(16, 28);
+                const encrypted = data.slice(28);
+                const key = await deriveKey(passphrase, salt);
+                const decrypted = await crypto.subtle.decrypt(
+                    { name: "AES-GCM", iv: iv },
+                    key,
+                    encrypted
+                );
+                return new TextDecoder().decode(decrypted);
+            } catch (error) {
+                alert("Decryption failed: " + error.message);
+            }
+        }
+
+        // Event listeners for buttons
+        document.getElementById('runEncrypt').addEventListener('click', async () => {
+            const message = document.getElementById('message').value;
+            const passphrase = document.getElementById('passphrase').value;
+            try {
+                const encryptedMessage = await encryptMessage(message, passphrase);
+                document.getElementById('encryptedMessage').textContent = encryptedMessage;
+				document.getElementById('decryptedMessage').textContent = '';
+            } catch (error) {
+                alert("Encryption failed: " + error.message);
+            }
+        });
+
+        document.getElementById('runDecrypt').addEventListener('click', async () => {
+            const encryptedMessage = document.getElementById('message').value;
+            const passphrase = document.getElementById('passphrase').value;
+            try {
+                const decryptedMessage = await decryptMessage(encryptedMessage, passphrase);
+                document.getElementById('decryptedMessage').textContent = decryptedMessage;
+				document.getElementById('encryptedMessage').textContent = '';
+            } catch (error) {
+                alert("Decryption failed: " + error.message);
+            }
+        });
+
+
+		function copyToClipboard(text) {
+            navigator.clipboard.writeText(text).then(() => {
+                alert('Copied to clipboard!');
+            }).catch(err => {
+                alert('Failed to copy: ' + err);
+            });
+        }
+
+		// Event listener for the copy button
+        document.getElementById('copyEncryptedMessage').addEventListener('click', () => {
+            const encryptedMessage = document.getElementById('encryptedMessage').textContent;
+            if (encryptedMessage) {
+                copyToClipboard(encryptedMessage);
+            } else {
+                alert("No encrypted message to copy.");
+            }
+        });
+
+		document.getElementById('decryptedMessage').addEventListener('click', () => {
+            const decryptedMessage = document.getElementById('decryptedMessage').textContent;
+            if (decryptedMessage) {
+                copyToClipboard(decryptedMessage);
+            } else {
+                alert("No decrypted message to copy.");
+            }
+        });
+    </script>
+</body>
+</html>
